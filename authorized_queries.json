@@ -1,0 +1,67 @@
+[
+  {
+    "id": "orders_by_user",
+    "title": "Orders for a given user_id",
+    "sql": "SELECT id, user_id, total_amount, created_at FROM Orders WHERE user_id = :user_id",
+    "params": [
+      "user_id"
+    ],
+    "allowed_tables": [
+      "Orders"
+    ],
+    "allowed_columns": [
+      "id",
+      "user_id",
+      "total_amount",
+      "created_at"
+    ]
+  },
+  {
+    "id": "order_items_by_order",
+    "title": "Order items for a given order_id",
+    "sql": "SELECT id, order_id, product_id, quantity, unit_price FROM OrderItems WHERE order_id = :order_id",
+    "params": [
+      "order_id"
+    ],
+    "allowed_tables": [
+      "OrderItems"
+    ],
+    "allowed_columns": [
+      "id",
+      "order_id",
+      "product_id",
+      "quantity",
+      "unit_price"
+    ]
+  },
+  {
+    "id": "product_reviews_public",
+    "title": "Public product reviews (no filter)",
+    "sql": "SELECT id, product_id, rating, title, body FROM Reviews",
+    "params": [],
+    "allowed_tables": [
+      "Reviews"
+    ],
+    "allowed_columns": [
+      "id",
+      "product_id",
+      "rating",
+      "title",
+      "body"
+    ]
+  },
+  {
+    "id": "products_catalog",
+    "title": "Product catalog (id, name, price)",
+    "sql": "SELECT id, name, price FROM Products",
+    "params": [],
+    "allowed_tables": [
+      "Products"
+    ],
+    "allowed_columns": [
+      "id",
+      "name",
+      "price"
+    ]
+  }
+]

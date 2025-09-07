@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BreachIt Prototype</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    body { padding: 1rem; }
+    textarea { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    pre { white-space: pre-wrap; word-wrap: break-word; }
+    .ok { color: green; }
+    .bad { color: #b00020; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    table { font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h2>🛡️ BreachIt — SQL Containment Tester (Prototype)</h2>
+  <p>Select an <b>Authorized Query</b> and enter your own SQL (single <code>SELECT</code>). We'll check containment and compare result sets.</p>
+
+  <article>
+    <label for="auth">Authorized Query</label>
+    <select id="auth"></select>
+
+    <div id="paramBox"></div>
+
+    <label for="user_sql">Your SQL</label>
+    <textarea id="user_sql" placeholder="SELECT id, user_id, total_amount FROM Orders WHERE user_id = 1"></textarea>
+
+    <button id="submitBtn">Run containment check</button>
+  </article>
+
+  <div class="grid">
+    <article>
+      <h4>Decision</h4>
+      <div id="decision" class="mono"></div>
+      <div id="reason"></div>
+    </article>
+    <article>
+      <h4>Debug</h4>
+      <pre id="debug"></pre>
+    </article>
+  </div>
+
+  <article>
+    <h4>Results — Your Query</h4>
+    <div id="userResults"></div>
+  </article>
+  <article>
+    <h4>Results — Authorized Query</h4>
+    <div id="authResults"></div>
+  </article>
+
+  <script src="main.js"></script>
+</body>
+</html>
