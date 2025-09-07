@@ -4,8 +4,14 @@ import re
 
 SAFE_SELECT_RE = re.compile(r"^\s*select\s", re.IGNORECASE | re.DOTALL)
 
+# Symbolic tokens to block anywhere (substring is fine)
 FORBIDDEN_TOKENS = [
-    ";", "--", "/*", "*/", "drop", "insert", "update", "delete", "alter", "create", "attach", "pragma", "vacuum",
+    ";", "--", "/*", "*/"
+]
+
+# SQL keywords to block only as standalone words (won't match inside identifiers like `created_at`)
+FORBIDDEN_KEYWORDS = [
+    "drop", "insert", "update", "delete", "alter", "create", "attach", "pragma", "vacuum",
     "grant", "revoke", "truncate"
 ]
 
@@ -14,7 +20,10 @@ JOIN_RE = re.compile(r"\bjoin\b", re.IGNORECASE)
 
 IDENT_RE = r"[A-Za-z_][A-Za-z0-9_]*"
 TABLE_EXTRACT_RE = re.compile(r"from\s+(" + IDENT_RE + r")(?:\s+\w+)?", re.IGNORECASE)
-TABLES_EXTRACT_RE = re.compile(r"from\s+(" + IDENT_RE + r")(?:\s+\w+)?(?:\s*,\s*(" + IDENT_RE + r")(?:\s+\w+)?)?", re.IGNORECASE)
+TABLES_EXTRACT_RE = re.compile(
+    r"from\s+(" + IDENT_RE + r")(?:\s+\w+)?(?:\s*,\s*(" + IDENT_RE + r")(?:\s+\w+)?)?",
+    re.IGNORECASE
+)
 SELECT_COLS_RE = re.compile(r"select\s+(.*?)\s+from", re.IGNORECASE | re.DOTALL)
 
 def tokenize_identifiers(expr: str) -> Set[str]:
@@ -22,19 +31,28 @@ def tokenize_identifiers(expr: str) -> Set[str]:
 
 def basic_static_safety_checks(sql: str) -> Tuple[bool, List[str]]:
     """
-    Very simple static checks to ensure:
+    Basic static checks to ensure:
     - Single SELECT only
-    - No dangerous tokens
+    - No dangerous tokens (symbols)
+    - No dangerous DDL/DML keywords (word-boundary match)
     - No UNIONs
     """
-    reasons = []
+    reasons: List[str] = []
     s = sql.strip()
     if not SAFE_SELECT_RE.match(s):
         reasons.append("Only single SELECT statements are allowed.")
     lowered = s.lower()
+
+    # Symbol tokens: substring detection is fine
     for tok in FORBIDDEN_TOKENS:
         if tok in lowered:
             reasons.append(f"Forbidden token detected: {tok}")
+
+    # Keywords: block only on word boundaries
+    for kw in FORBIDDEN_KEYWORDS:
+        if re.search(rf"\b{re.escape(kw)}\b", lowered):
+            reasons.append(f"Forbidden keyword detected: {kw}")
+
     if UNION_RE.search(lowered):
         reasons.append("UNION is not allowed.")
     if ";" in s.strip()[1:]:
@@ -58,15 +76,10 @@ def extract_columns(sql: str) -> Set[str]:
     cols = m.group(1)
     if cols.strip() == "*":
         return {"*"}
-    # normalize split by commas
     parts = [p.strip() for p in cols.split(",")]
-    # keep simple identifiers (allow t.col too)
     norm = set()
     for p in parts:
-        if "." in p:
-            norm.add(p.lower())
-        else:
-            norm.add(p.lower())
+        norm.add(p.lower())
     return norm
 
 def where_clause(sql: str) -> str:
@@ -78,18 +91,38 @@ def normalized_space(s: str) -> str:
 
 def implies_subset(user_where: str, auth_where: str) -> bool:
     """
-    Heuristic: if the user's WHERE clause contains all the auth WHERE tokens, we *guess* subset.
-    This is a naive string containment check intended only for demo purposes.
+    Heuristic subset check:
+    - Treat authorized named parameters (e.g., :user_id) as WILDCARD
+    - Normalize user literals (numbers/strings) to WILDCARD
+    - Then require all auth tokens to appear in user tokens
+    NOTE: still a toy heuristic for the prototype.
     """
-    u = normalized_space(user_where)
-    a = normalized_space(auth_where)
+    def normalize_clause(s: str) -> str:
+        s = normalized_space(s)
+        return s
+
+    u = normalize_clause(user_where)
+    a = normalize_clause(auth_where)
+
+    # If the authorized WHERE is empty, user's must also be empty to be a subset
     if not a:
-        # If authorized has no WHERE, user's must also have none for subset
         return u == ""
-    # All tokens from auth must appear in user
-    auth_tokens = set(a.split())
-    user_tokens = set(u.split())
+
+    import re
+    # Replace named params in authorized clause with a placeholder
+    a_norm = re.sub(r":\w+", "WILDCARD", a)
+
+    # Replace user literals (numbers and quoted strings) with the same placeholder
+    u_norm = re.sub(r"\b\d+(\.\d+)?\b", "WILDCARD", u)             # numbers
+    u_norm = re.sub(r"'[^']*'", "WILDCARD", u_norm)                # 'strings'
+    u_norm = re.sub(r"\"[^\"]*\"", "WILDCARD", u_norm)             # "strings"
+
+    # Tokenize on whitespace; require auth tokens to be subset of user tokens
+    auth_tokens = set(a_norm.split())
+    user_tokens = set(u_norm.split())
+
     return auth_tokens.issubset(user_tokens)
+
 
 def contained_by(user_sql: str, auth_sql: str, allowed_tables: Set[str], allowed_cols: Set[str]) -> Tuple[bool, List[str]]:
     """
@@ -110,7 +143,6 @@ def contained_by(user_sql: str, auth_sql: str, allowed_tables: Set[str], allowed
         reasons.append("Could not extract table(s) from user query.")
         return False, reasons
 
-    # Only allow tables that are in allowed_tables AND also in the authorized query tables
     if not u_tables.issubset(allowed_tables):
         reasons.append(f"User tables {u_tables} are not all in allowed tables {allowed_tables}.")
         return False, reasons
@@ -122,18 +154,15 @@ def contained_by(user_sql: str, auth_sql: str, allowed_tables: Set[str], allowed
     u_cols = extract_columns(user_sql)
     a_cols = extract_columns(auth_sql)
 
-    # If user selects *, then authorized must also allow *.
     if "*" in u_cols and "*" not in a_cols:
         reasons.append("User selects '*' but authorized query does not allow '*'")
         return False, reasons
 
-    # If authorized selects *, allow any columns; otherwise require subset
     if "*" not in a_cols and "*" not in u_cols:
         if not u_cols.issubset(a_cols):
             reasons.append(f"User columns {u_cols} must be subset of authorized columns {a_cols}.")
             return False, reasons
 
-    # Where clause subset (naive)
     if not implies_subset(where_clause(user_sql), where_clause(auth_sql)):
         reasons.append("WHERE clause of user query is not a subset of authorized query (heuristic).")
         return False, reasons
